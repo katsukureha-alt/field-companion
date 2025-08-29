@@ -306,3 +306,120 @@ if(apiKeyEl){
 }
 
 openDB().then(()=>console.log('DB ready'));
+/* ===== reverse geocode patch (append-only) ===== */
+(async () => {
+  // 1) 住所取得関数（Google Geocoding API）
+  async function reverseGeocode(lat, lng) {
+    // 設定タブで保存したキー名（そのまま）
+    const key = localStorage.getItem('gmaps_api_key');
+    if (!key) throw new Error('設定タブで Google Maps Geocoding APIキー を保存してください。');
+
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=ja&key=${encodeURIComponent(key)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.status !== 'OK' || !data.results?.length) {
+      throw new Error(data.error_message || data.status || 'UNKNOWN_ERROR');
+    }
+    return data.results[0].formatted_address;
+  }
+
+  // 2) 住所出力先（#address or #addr があればそこに入れる。無ければ画面下に表示用エリアを作成）
+  function setAddressText(text) {
+    const out = document.getElementById('address') || document.getElementById('addr');
+    if (out) {
+      if ('value' in out) out.value = text;
+      else out.textContent = text;
+      return;
+    }
+    let fallback = document.getElementById('addr-fallback');
+    if (!fallback) {
+      fallback = document.createElement('div');
+      fallback.id = 'addr-fallback';
+      fallback.style.cssText = 'margin-top:8px;color:#2a5;word-break:break-all;';
+      // フォームの下辺りに置く
+      (document.querySelector('form') || document.body).appendChild(fallback);
+    }
+    fallback.textContent = `住所: ${text}`;
+  }
+
+  // 3) 座標の取得（いろんな取り方を試す）
+  function getLatLng() {
+    // a) 既存コードがグローバルに保持している場合
+    if (typeof window.currentLat === 'number' && typeof window.currentLng === 'number') {
+      return { lat: window.currentLat, lng: window.currentLng };
+    }
+    // b) 隠し/入力フィールドがある場合
+    const latEl = document.getElementById('lat');
+    const lngEl = document.getElementById('lng');
+    if (latEl && lngEl) {
+      const lat = Number(latEl.value ?? latEl.textContent ?? latEl.dataset.value);
+      const lng = Number(lngEl.value ?? lngEl.textContent ?? lngEl.dataset.value);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    }
+    // c) 画面の表示テキスト「緯度:xx 経度:yy」をパース
+    const txt = document.body.innerText || '';
+    const m = txt.match(/緯度[:：]\s*([0-9.+-]+)\s*.*?経度[:：]\s*([0-9.+-]+)/);
+    if (m) {
+      const lat = Number(m[1]), lng = Number(m[2]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    }
+    return null;
+  }
+
+  // 4) 「住所に変換」ボタンを見つけてイベント付与
+  function findToAddressButton() {
+    // id 優先
+    let btn = document.getElementById('to-address') ||
+              document.getElementById('btnToAddr') ||
+              document.getElementById('btn-reverse');
+    if (btn) return btn;
+    // ラベルで探索（innerText に「住所に変換」を含むボタン/要素）
+    const candidates = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
+    btn = candidates.find(el => (el.innerText || el.value || '').includes('住所に変換'));
+    return btn || null;
+  }
+
+  function attach() {
+    const btn = findToAddressButton();
+    if (!btn) return false;
+
+    if (btn._addrPatched) return true; // 多重付与防止
+    btn._addrPatched = true;
+
+    btn.addEventListener('click', async (e) => {
+      try {
+        const pos = getLatLng();
+        if (!pos) throw new Error('先に「位置情報を取得」を実行してください。');
+        btn.disabled = true;
+        btn.dataset._oldText = btn.innerText || btn.value || '';
+        if ('innerText' in btn) btn.innerText = '住所取得中…';
+        if ('value' in btn) btn.value = '住所取得中…';
+
+        const addr = await reverseGeocode(pos.lat, pos.lng);
+        setAddressText(addr);
+      } catch (err) {
+        alert('住所を取得できませんでした：' + (err?.message || err));
+      } finally {
+        btn.disabled = false;
+        if ('innerText' in btn && btn.dataset._oldText) btn.innerText = btn.dataset._oldText;
+        if ('value' in btn && btn.dataset._oldText) btn.value = btn.dataset._oldText;
+      }
+    });
+    return true;
+  }
+
+  // DOM 準備後にアタッチ。SPA 対策で少しリトライする
+  const tryAttach = () => {
+    let tries = 0;
+    const t = setInterval(() => {
+      tries++;
+      if (attach() || tries > 20) clearInterval(t);
+    }, 300);
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', tryAttach);
+  } else {
+    tryAttach();
+  }
+})();
