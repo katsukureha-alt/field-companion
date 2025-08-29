@@ -134,11 +134,15 @@ async function reverseGeocode(lat,lng){
 }
 
 // ---------- 外部リンク（路線価 / 用途地域） ----------
-function openRosenka(lat,lng){
-  // 国税庁 路線価図（地図モード&座標フォーカスはブラウザ標準の検索）簡易遷移
-  const q = `${lat},${lng}`;
-  window.open(`https://www.rosenka.nta.go.jp/`, '_blank');
-  // ユーザーが地図内検索で座標貼付→移動（スマホ運用で実用的）
+// 路線価ボタン：地価マップへ遷移
+function openRosenka(lat, lng) {
+  const url = 'https://www.chikamap.jp/chikamap-sp/MapPage';
+  // 新しいタブで開く（ブロックされたら同一タブで遷移）
+  try {
+    window.open(url, '_blank');
+  } catch (_) {
+    location.href = url;
+  }
 }
 
 function openYoto(lat,lng){
