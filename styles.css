@@ -28,6 +28,7 @@ button.danger{background:#b91c1c}
 .entry .thumb{width:100px;height:100px;object-fit:cover;border-radius:10px;border:1px solid #e2e8f0;background:#f1f5f9}
 .entry .info{display:flex;flex-direction:column;gap:6px}
 .entry .row1{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.entry .date-label{color:#475569;font-size:12px}
 .entry .date{font-weight:700;color:#0f172a}
 .entry .tags{background:#ecfeff;color:#155e75;padding:2px 8px;border-radius:999px;font-size:12px}
 .badge[data-badge="visited"]{background:#dcfce7;color:#166534;padding:2px 8px;border-radius:999px;font-size:12px;display:none}

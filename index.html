@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>現地フィールド相棒 v3（フル）</title>
+  <title>現地フィールド相棒 v3.1（フル）</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0f766e">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -16,7 +16,7 @@
 </head>
 <body>
 <header>
-  <h1>現地フィールド相棒 v3</h1>
+  <h1>現地フィールド相棒 v3.1</h1>
   <nav>
     <button id="tab-capture" class="active">記録する</button>
     <button id="tab-list">一覧</button>
@@ -25,6 +25,7 @@
 </header>
 
 <main>
+  <!-- Capture Tab -->
   <section id="screen-capture" class="screen active">
     <div class="card">
       <h2>新規記録</h2>
@@ -34,6 +35,7 @@
         <small class="muted">※ 大きな画像は長辺1600pxに自動縮小します。</small>
         <div id="photoPreview" class="preview"></div>
       </div>
+
       <div class="field split">
         <div>
           <label>メモ</label>
@@ -45,6 +47,7 @@
           <label class="check"><input id="visited" type="checkbox"> 訪問済みにする</label>
         </div>
       </div>
+
       <div class="field geo">
         <div class="geo-row">
           <button id="getLocation">位置情報を取得</button>
@@ -57,6 +60,7 @@
           <button id="openZoning" class="ghost">用途地域マップ</button>
         </div>
       </div>
+
       <div class="actions">
         <button id="saveEntry" class="primary">保存する</button>
         <button id="resetForm" class="ghost">リセット</button>
@@ -64,6 +68,7 @@
     </div>
   </section>
 
+  <!-- List Tab -->
   <section id="screen-list" class="screen">
     <div class="toolbar">
       <input id="search" type="search" placeholder="メモ・タグ・住所で検索">
@@ -71,6 +76,10 @@
         <option value="">訪問フィルタなし</option>
         <option value="visited">訪問済みのみ</option>
         <option value="unvisited">未訪問のみ</option>
+      </select>
+      <select id="sortOrder" title="並び順">
+        <option value="newest">新しい順</option>
+        <option value="oldest">古い順</option>
       </select>
       <button id="exportJSON">エクスポート</button>
       <label class="import-label">
@@ -81,6 +90,7 @@
     <div id="list"></div>
   </section>
 
+  <!-- Settings Tab -->
   <section id="screen-settings" class="screen">
     <div class="card">
       <h2>設定 / 使い方</h2>
@@ -98,13 +108,6 @@
       <div class="field">
         <button id="clearAll" class="danger">データを全削除（ローカル）</button>
       </div>
-      <div class="field">
-        <label>自動取得について</label>
-        <p class="muted">
-          路線価・用途地域の自動取得APIは公式に統一がなく、現状は座標から各公的マップへジャンプする運用です。<br>
-          将来的にサーバ連携で自動化へ拡張可能です。
-        </p>
-      </div>
     </div>
   </section>
 </main>
@@ -114,7 +117,7 @@
     <img class="thumb" />
     <div class="info">
       <div class="row1">
-        <span class="date"></span>
+        <span class="date-label">訪問日時：</span><span class="date"></span>
         <span class="tags"></span>
         <span class="badge" data-badge="visited">訪問済</span>
       </div>
