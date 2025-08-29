@@ -1,365 +1,308 @@
-/* ===== 現地フィールド相棒 v3.1 - app.js (AC対応) =====
- * A: 訪問日時の自動記録 & 一覧表示/並び替え/検索
- * C: ローカルバックアップ（JSONエクスポート/インポート）
- * B: 逆ジオコーディングは設定画面のAPIキーを使用（実装済）
- * 依存: index.html のID構成（v3.1想定）
- */
-
-// ---------- ユーティリティ ----------
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-
-const fmtDateTime = (d=new Date())=>{
-  const pad = (n)=> String(n).padStart(2,'0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-
-// 画像をリサイズ（長辺1600px、JPEG品質0.8）
-async function resizeImages(files) {
-  const maxLen = 1600;
-  const out = [];
-  for (const file of files) {
-    if (!file.type.startsWith('image/')) continue;
-    const img = await new Promise((res)=>{
-      const i = new Image();
-      i.onload = ()=>res(i);
-      i.src = URL.createObjectURL(file);
-    });
-    const scale = Math.min(1, maxLen / Math.max(img.width, img.height));
-    const w = Math.round(img.width * scale);
-    const h = Math.round(img.height * scale);
-    const cvs = document.createElement('canvas');
-    cvs.width = w; cvs.height = h;
-    const ctx = cvs.getContext('2d');
-    ctx.drawImage(img, 0, 0, w, h);
-    const dataUrl = cvs.toDataURL('image/jpeg', 0.8);
-    out.push(dataUrl);
-    URL.revokeObjectURL(img.src);
-  }
-  return out.slice(0,5);
-}
-
-// ---------- IndexedDB ----------
-const DB_NAME = 'field-companion-db';
-const DB_VER = 3;
+const DB_NAME = 'field-companion-db-v3';
 const STORE = 'entries';
-
 let db;
-function openDB() {
-  return new Promise((resolve,reject)=>{
-    const req = indexedDB.open(DB_NAME, DB_VER);
+
+function openDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = (e)=>{
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        const os = db.createObjectStore(STORE, { keyPath:'id', autoIncrement:true });
-        os.createIndex('createdAt','createdAt');
-        os.createIndex('visited','visited');
-      } else {
-        const os = e.target.transaction.objectStore(STORE);
-        if (!os.indexNames.contains('createdAt')) os.createIndex('createdAt','createdAt');
-        if (!os.indexNames.contains('visited')) os.createIndex('visited','visited');
-      }
+      const db = e.target.result;
+      const store = db.createObjectStore(STORE, {keyPath:'id', autoIncrement:true});
+      store.createIndex('createdAt', 'createdAt', {unique:false});
+      store.createIndex('memo', 'memo', {unique:false});
+      store.createIndex('tags', 'tags', {unique:false});
+      store.createIndex('visited', 'visited', {unique:false});
+      store.createIndex('addr', 'addr', {unique:false});
     };
-    req.onsuccess = ()=>{ db=req.result; resolve(); };
+    req.onsuccess = ()=>{ db = req.result; resolve(db); };
     req.onerror = ()=>reject(req.error);
   });
 }
 
 function addEntry(entry){
   return new Promise((resolve,reject)=>{
-    const tx = db.transaction(STORE,'readwrite');
-    tx.objectStore(STORE).add(entry);
-    tx.oncomplete = ()=>resolve();
-    tx.onerror = ()=>reject(tx.error);
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).add(entry).onsuccess = (e)=> resolve(e.target.result);
+    tx.onerror = ()=> reject(tx.error);
   });
 }
 
-function getAll(){
+function getAllEntries(){
   return new Promise((resolve,reject)=>{
-    const tx = db.transaction(STORE,'readonly');
+    const tx = db.transaction(STORE, 'readonly');
     const req = tx.objectStore(STORE).getAll();
-    req.onsuccess = ()=>resolve(req.result||[]);
-    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
   });
 }
 
-function clearAll(){
+function deleteEntry(id){
   return new Promise((resolve,reject)=>{
-    const tx = db.transaction(STORE,'readwrite');
-    tx.objectStore(STORE).clear();
-    tx.oncomplete = ()=>resolve();
-    tx.onerror = ()=>reject(tx.error);
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(id).onsuccess = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
   });
 }
 
-// ---------- 設定（APIキー） ----------
-const SETTINGS_KEY = 'fc_settings';
-function loadSettings(){
-  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)||'{}'); }
-  catch { return {}; }
-}
-function saveSettings(obj){
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(obj||{}));
-}
-
-// ---------- 位置情報 & 逆ジオ ----------
-let currentPos = null; // {lat,lng,accuracy}
-
-async function getLocation(){
-  return new Promise((resolve,reject)=>{
-    if (!navigator.geolocation) return reject(new Error('Geolocation not supported'));
-    navigator.geolocation.getCurrentPosition(
-      (p)=>{
-        const lat = +p.coords.latitude.toFixed(6);
-        const lng = +p.coords.longitude.toFixed(6);
-        resolve({lat,lng,accuracy: Math.round(p.coords.accuracy||0)});
-      },
-      (err)=>reject(err),
-      { enableHighAccuracy:true, timeout:15000, maximumAge:0 }
-    );
-  });
+const tabs = {
+  capture: document.getElementById('screen-capture'),
+  list: document.getElementById('screen-list'),
+  settings: document.getElementById('screen-settings')
+};
+document.getElementById('tab-capture').addEventListener('click', ()=>switchTab('capture'));
+document.getElementById('tab-list').addEventListener('click', ()=>switchTab('list'));
+document.getElementById('tab-settings').addEventListener('click', ()=>switchTab('settings'));
+function switchTab(name){
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  Object.values(tabs).forEach(sec=>sec.classList.remove('active'));
+  tabs[name].classList.add('active');
+  if(name==='list'){ renderList(); }
 }
 
-async function reverseGeocode(lat,lng){
-  const { apiKey } = loadSettings();
-  if (!apiKey) throw new Error('設定にGoogle Maps Geocoding APIキーが未保存です。');
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=ja&key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url);
-  const json = await res.json();
-  if (json.status !== 'OK') {
-    const m = json.error_message || json.status;
-    throw new Error(`住所取得エラー: ${m}`);
+const photoInput = document.getElementById('photoInput');
+const preview = document.getElementById('photoPreview');
+const memoEl = document.getElementById('memo');
+const tagsEl = document.getElementById('tags');
+const visitedEl = document.getElementById('visited');
+const geoBtn = document.getElementById('getLocation');
+const geoStatus = document.getElementById('geoStatus');
+const addrStatus = document.getElementById('addrStatus');
+const reverseBtn = document.getElementById('reverseGeocode');
+const landLinks = document.getElementById('landLinks');
+const saveBtn = document.getElementById('saveEntry');
+const resetBtn = document.getElementById('resetForm');
+const listEl = document.getElementById('list');
+const searchEl = document.getElementById('search');
+const filterVisitedEl = document.getElementById('filterVisited');
+const sortOrderEl = document.getElementById('sortOrder');
+
+let latestCoords = null;
+let latestAddress = '';
+
+photoInput.addEventListener('change', async ()=>{
+  preview.innerHTML='';
+  const files = Array.from(photoInput.files || []).slice(0,5);
+  for(const f of files){
+    const url = URL.createObjectURL(f);
+    const img = document.createElement('img');
+    img.src = url;
+    preview.appendChild(img);
   }
-  return json.results[0]?.formatted_address || '';
+});
+
+geoBtn.addEventListener('click', ()=>{
+  geoStatus.textContent = '取得中…';
+  if(!navigator.geolocation){
+    geoStatus.textContent = 'この端末では位置情報が利用できません';
+    return;
+  }
+  navigator.geolocation.getCurrentPosition((pos)=>{
+    latestCoords = {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      acc: pos.coords.accuracy
+    };
+    geoStatus.textContent = `緯度:${latestCoords.lat.toFixed(6)} 経度:${latestCoords.lng.toFixed(6)}  精度±${Math.round(latestCoords.acc)}m`;
+    landLinks.style.display = 'flex';
+  }, (err)=>{
+    geoStatus.textContent = '取得失敗：位置情報の許可をご確認ください';
+    console.error(err);
+  }, {enableHighAccuracy:true, timeout:10000});
+});
+
+reverseBtn.addEventListener('click', async ()=>{
+  if(!latestCoords){ addrStatus.textContent = '先に位置情報を取得してください'; return; }
+  const key = (localStorage.getItem('gc_api_key')||'').trim();
+  if(!key){ addrStatus.textContent = '設定でGoogle APIキーを保存してください'; return; }
+  addrStatus.textContent = '住所取得中…';
+  try{
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latestCoords.lat},${latestCoords.lng}&key=${encodeURIComponent(key)}&language=ja`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.status==='OK' && data.results && data.results.length>0){
+      latestAddress = data.results[0].formatted_address;
+      addrStatus.textContent = '住所：' + latestAddress;
+    }else{
+      addrStatus.textContent = '住所を取得できませんでした';
+    }
+  }catch(e){
+    console.error(e);
+    addrStatus.textContent = '取得エラー：ネットワーク/キーをご確認ください';
+  }
+});
+
+document.getElementById('openNTA')?.addEventListener('click', ()=>{
+  if(!latestCoords) return alert('先に位置情報を取得してください');
+  const url = `https://www.rosenka.nta.go.jp/?lat=${latestCoords.lat}&lon=${latestCoords.lng}`;
+  window.open(url,'_blank');
+});
+document.getElementById('openZoning')?.addEventListener('click', ()=>{
+  if(!latestCoords) return alert('先に位置情報を取得してください');
+  const url = `https://maps.gsi.go.jp/?ll=${latestCoords.lat},${latestCoords.lng}&z=17&base=std&ls=Mlitchiiki_youto&disp=1`;
+  window.open(url,'_blank');
+});
+
+saveBtn.addEventListener('click', async ()=>{
+  const files = Array.from(photoInput.files || []).slice(0,5);
+  if(files.length===0){
+    alert('写真を1枚以上選択（撮影）してください');
+    return;
+  }
+  const compressed = [];
+  for(const f of files){
+    const dataUrl = await compressImageToDataURL(f, 1600, 0.85);
+    compressed.push(dataUrl);
+  }
+  const entry = {
+    photos: compressed,
+    memo: (memoEl.value||'').trim(),
+    tags: (tagsEl.value||'').trim(),
+    visited: !!visitedEl.checked,
+    addr: latestAddress,
+    coords: latestCoords,
+    createdAt: Date.now()
+  };
+  await addEntry(entry);
+  alert('保存しました');
+  // reset
+  photoInput.value = ''; preview.innerHTML='';
+  memoEl.value = ''; tagsEl.value = ''; visitedEl.checked = false;
+  latestCoords = null; latestAddress = '';
+  geoStatus.textContent='未取得'; addrStatus.textContent=''; landLinks.style.display='none';
+});
+
+resetBtn.addEventListener('click', ()=>{
+  photoInput.value=''; preview.innerHTML=''; memoEl.value=''; tagsEl.value=''; visitedEl.checked=false; latestCoords=null; latestAddress=''; geoStatus.textContent='未取得'; addrStatus.textContent=''; landLinks.style.display='none';
+});
+
+function compressImageToDataURL(file, maxSize=1600, quality=0.85){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      let {width, height} = img;
+      const scale = Math.min(1, maxSize/Math.max(width,height));
+      width = Math.round(width*scale);
+      height = Math.round(height*scale);
+      const cv = document.createElement('canvas');
+      cv.width = width; cv.height = height;
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(cv.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    const reader = new FileReader();
+    reader.onload = ()=> img.src = reader.result;
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
-// ---------- 外部リンク（路線価 / 用途地域） ----------
-function openRosenka(lat,lng){
-  // 国税庁 路線価図（地図モード&座標フォーカスはブラウザ標準の検索）簡易遷移
-  const q = `${lat},${lng}`;
-  window.open(`https://www.rosenka.nta.go.jp/`, '_blank');
-  // ユーザーが地図内検索で座標貼付→移動（スマホ運用で実用的）
-}
+async function renderList(){
+  const q = (searchEl.value||'').trim().toLowerCase();
+  const vfilter = filterVisitedEl.value;
+  const order = sortOrderEl ? sortOrderEl.value : 'newest';
+  const entries = (await getAllEntries())
+    .filter(e => {
+      let ok = true;
+      if(vfilter==='visited') ok = e.visited;
+      if(vfilter==='unvisited') ok = !e.visited;
+      if(q){
+        const hay = (e.memo||'') + ' ' + (e.tags||'') + ' ' + (e.addr||'');
+        ok = ok && hay.toLowerCase().includes(q);
+      }
+      return ok;
+    })
+    .sort((a,b)=> order==='newest' ? b.createdAt - a.createdAt : a.createdAt - b.createdAt);
 
-function openYoto(lat,lng){
-  // 国土数値情報ダウンローダや自治体GISが多様なため、用途地域ポータル（Plat-E）へ誘導
-  window.open(`https://www.mlit.go.jp/plateau/`, '_blank');
-}
-
-// ---------- 一覧描画 ----------
-function renderList(items, {q='', sort='new'}={}){
-  const list = $('#list');
-  if (!list) return; // 一覧タブでのみ存在
-  q = (q||'').trim();
-  let data = [...items];
-  if (q) {
-    const kw = q.toLowerCase();
-    data = data.filter(e=>{
-      return (e.addr||'').toLowerCase().includes(kw)
-          || (e.memo||'').toLowerCase().includes(kw)
-          || (e.tags||'').toLowerCase().includes(kw);
+  listEl.innerHTML = '';
+  const tpl = document.getElementById('entryTemplate');
+  for(const e of entries){
+    const node = tpl.content.cloneNode(true);
+    const root = node.querySelector('.entry');
+    if(e.visited) root.classList.add('visited');
+    node.querySelector('.thumb').src = (e.photos && e.photos[0]) || '';
+    const d = new Date(e.createdAt);
+    const formatted = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ` +
+                      `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    node.querySelector('.date').textContent = formatted;
+    node.querySelector('.tags').textContent = e.tags || '';
+    node.querySelector('.memo').textContent = e.memo || '';
+    node.querySelector('.addr').textContent = e.addr || '';
+    const coordsEl = node.querySelector('.coords');
+    const linksEl = node.querySelector('.links');
+    if(e.coords){
+      coordsEl.textContent = `(${e.coords.lat.toFixed(6)}, ${e.coords.lng.toFixed(6)}) ±${Math.round(e.coords.acc)}m`;
+      const gmap = document.createElement('a');
+      gmap.href = `https://maps.google.com/?q=${e.coords.lat},${e.coords.lng}`;
+      gmap.target = '_blank'; gmap.textContent='Google地図';
+      const amap = document.createElement('a');
+      amap.href = `http://maps.apple.com/?ll=${e.coords.lat},${e.coords.lng}`; amap.textContent='Apple地図';
+      linksEl.appendChild(gmap); linksEl.appendChild(amap);
+    }else{
+      coordsEl.textContent = '座標なし';
+    }
+    const gal = node.querySelector('.gallery');
+    (e.photos||[]).forEach(src=>{ const im=document.createElement('img'); im.src=src; gal.appendChild(im); });
+    node.querySelector('.openMap').addEventListener('click', ()=>{
+      if(e.coords) window.open(`http://maps.apple.com/?ll=${e.coords.lat},${e.coords.lng}`,'_blank');
+      else alert('座標がありません');
     });
+    node.querySelector('.openNTA').addEventListener('click', ()=>{
+      if(!e.coords){ alert('座標がありません'); return; }
+      window.open(`https://www.rosenka.nta.go.jp/?lat=${e.coords.lat}&lon=${e.coords.lng}`,'_blank');
+    });
+    node.querySelector('.openZoning').addEventListener('click', ()=>{
+      if(!e.coords){ alert('座標がありません'); return; }
+      window.open(`https://maps.gsi.go.jp/?ll=${e.coords.lat},${e.coords.lng}&z=17&base=std&ls=Mlitchiiki_youto&disp=1`,'_blank');
+    });
+    node.querySelector('.copyAddr').addEventListener('click', async ()=>{
+      if(!e.coords){ alert('座標がありません'); return; }
+      try{ await navigator.clipboard.writeText(`${e.coords.lat},${e.coords.lng}`); alert('座標をコピーしました'); }
+      catch(_){ alert('コピーに失敗しました'); }
+    });
+    node.querySelector('.delete').addEventListener('click', async ()=>{
+      if(confirm('この記録を削除しますか？')){ await deleteEntry(e.id); renderList(); }
+    });
+    listEl.appendChild(node);
   }
-  data.sort((a,b)=>{
-    if (sort==='old') return (a.createdAt||0) - (b.createdAt||0);
-    if (sort==='visited') return (b.visited|0) - (a.visited|0);
-    return (b.createdAt||0) - (a.createdAt||0);
-  });
-
-  list.innerHTML = data.map(e=>{
-    const dt = fmtDateTime(new Date(e.createdAt||Date.now()));
-    const badge = e.visited ? '<span class="badge visited">訪問済</span>' : '';
-    const imgs = (e.photos||[]).slice(0,1).map(u=>`<img src="${u}" alt="" class="thumb">`).join('');
-    return `
-      <li class="entry">
-        <div class="row">
-          <div class="left">${imgs || '<div class="thumb placeholder"></div>'}</div>
-          <div class="right">
-            <div class="line"><strong>${e.addr||'(住所未取得)'}</strong> ${badge}</div>
-            <div class="line">${dt} ・ ${e.lat?.toFixed?.(6)||''}, ${e.lng?.toFixed?.(6)||''}</div>
-            <div class="line memo">${(e.memo||'').replace(/</g,'&lt;')}</div>
-            <div class="line tags">${e.tags?`#${e.tags.replace(/\s+/g,' #')}`:''}</div>
-          </div>
-        </div>
-      </li>`;
-  }).join('') || `<li class="empty">データがありません</li>`;
 }
 
-// ---------- バックアップ（エクスポート/インポート） ----------
-async function exportJSON(){
-  const data = await getAll();
-  const blob = new Blob([JSON.stringify({version:1,data}, null, 2)], {type:'application/json'});
+searchEl && searchEl.addEventListener('input', ()=>renderList());
+filterVisitedEl && filterVisitedEl.addEventListener('change', ()=>renderList());
+sortOrderEl && sortOrderEl.addEventListener('change', ()=>renderList());
+
+document.getElementById('exportJSON').addEventListener('click', async ()=>{
+  const data = await getAllEntries();
+  const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = `field-companion-backup-${Date.now()}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
+  a.href = url; a.download = 'field_entries.json'; a.click(); URL.revokeObjectURL(url);
+});
 
-async function importJSON(file){
-  const text = await file.text();
-  const json = JSON.parse(text);
-  if (!json || !Array.isArray(json.data)) throw new Error('不正なバックアップ形式です。');
-  // 既存は温存、インポート分を追記
-  for (const e of json.data) {
-    // id を消して新規採番
-    const {id, ...rest} = e;
-    await addEntry(rest);
-  }
-}
+document.getElementById('importJSON').addEventListener('change', async (e)=>{
+  const file = e.target.files[0]; if(!file) return;
+  const arr = JSON.parse(await file.text());
+  for(const ent of arr){ delete ent.id; await addEntry(ent); }
+  alert('インポートしました'); renderList();
+});
 
-// ---------- 画面イベント ----------
-async function init(){
-  await openDB();
+document.getElementById('clearAll')?.addEventListener('click', async ()=>{
+  if(!confirm('全データを削除します。よろしいですか？')) return;
+  const req = indexedDB.deleteDatabase(DB_NAME);
+  req.onsuccess = ()=>{ alert('削除しました'); location.reload(); };
+  req.onerror = ()=> alert('削除に失敗しました');
+});
 
-  // タブ/存在チェック（同一app.jsを全画面で使う前提）
-  const elMemo = $('#memo');
-  const elTags = $('#tags');
-  const elVisited = $('#visited');
-  const elLatLng = $('#latlng');
-  const elAddr = $('#addr');
-
-  // --- 記録タブ ---
-  if (elMemo && $('#btn-save')) {
-    // 位置情報
-    $('#btn-geo')?.addEventListener('click', async ()=>{
-      try {
-        const pos = await getLocation();
-        currentPos = pos;
-        elLatLng.textContent = `緯度:${pos.lat} 経度:${pos.lng} 精度±${pos.accuracy}m`;
-      } catch (e) {
-        alert('位置情報を取得できませんでした: ' + e.message);
-      }
-    });
-
-    // 住所に変換
-    $('#btn-revgeo')?.addEventListener('click', async ()=>{
-      try {
-        if (!currentPos) {
-          // 直近の表示テキストから拾える場合あり
-          const m = elLatLng.textContent.match(/緯度:([0-9\.\-]+)\s+経度:([0-9\.\-]+)/);
-          if (m) currentPos = {lat:+m[1], lng:+m[2], accuracy:0};
-        }
-        if (!currentPos) throw new Error('先に「位置情報を取得」を実行してください。');
-        const addr = await reverseGeocode(currentPos.lat, currentPos.lng);
-        elAddr.textContent = `住所: ${addr}`;
-      } catch (e) {
-        alert(e.message);
-      }
-    });
-
-    // 路線価 / 用途地域
-    $('#btn-rosenka')?.addEventListener('click', ()=>{
-      if (!currentPos) return alert('先に位置情報を取得してください。');
-      openRosenka(currentPos.lat, currentPos.lng);
-    });
-    $('#btn-yoto')?.addEventListener('click', ()=>{
-      if (!currentPos) return alert('先に位置情報を取得してください。');
-      openYoto(currentPos.lat, currentPos.lng);
-    });
-
-    // 保存
-    $('#btn-save')?.addEventListener('click', async ()=>{
-      try {
-        // 画像
-        const files = $('#file-input')?.files || [];
-        const photos = await resizeImages(files);
-
-        // 緯度経度（テキストからも拾う保険）
-        let lat, lng, accuracy;
-        if (currentPos) ({lat,lng,accuracy} = currentPos);
-        if (lat==null || lng==null) {
-          const m = elLatLng.textContent.match(/緯度:([0-9\.\-]+)\s+経度:([0-9\.\-]+)/);
-          if (m) { lat = +m[1]; lng = +m[2]; }
-        }
-
-        const addrTxt = elAddr.textContent.replace(/^住所:\s*/,'').trim() || '';
-        const entry = {
-          createdAt: Date.now(),              // ★ 訪問日時（自動）
-          memo: elMemo.value.trim(),
-          tags: elTags.value.trim(),
-          visited: !!elVisited.checked,
-          lat, lng, accuracy,
-          addr: addrTxt,
-          photos
-        };
-        await addEntry(entry);
-
-        // フォームリセット
-        elMemo.value = '';
-        elTags.value = '';
-        elVisited.checked = false;
-        if ($('#file-input')) $('#file-input').value = '';
-        currentPos = null;
-        elLatLng.textContent = '未取得';
-        elAddr.textContent = '';
-        alert('保存しました。');
-      } catch (e) {
-        alert('保存に失敗しました: ' + e.message);
-      }
-    });
-  }
-
-  // --- 一覧タブ ---
-  if ($('#list')) {
-    const refresh = async ()=>{
-      const all = await getAll();
-      renderList(all, {
-        q: $('#q')?.value || '',
-        sort: $('#sort')?.value || 'new'
-      });
-    };
-    $('#q')?.addEventListener('input', refresh);
-    $('#sort')?.addEventListener('change', refresh);
-    await refresh();
-
-    // バックアップ（エクスポート/インポート）
-    $('#btn-export')?.addEventListener('click', exportJSON);
-    $('#btn-import')?.addEventListener('change', async (e)=>{
-      const file = e.target.files?.[0];
-      if (!file) return;
-      try {
-        await importJSON(file);
-        alert('インポート完了');
-        await refresh();
-      } catch (err) {
-        alert('インポート失敗: ' + err.message);
-      } finally {
-        e.target.value = '';
-      }
-    });
-    $('#btn-clear')?.addEventListener('click', async ()=>{
-      if (!confirm('ローカルの全データを削除します。よろしいですか？')) return;
-      await clearAll();
-      await refresh();
-    });
-  }
-
-  // --- 設定タブ ---
-  if ($('#settings-api-key')) {
-    const st = loadSettings();
-    $('#settings-api-key').value = st.apiKey || '';
-    $('#btn-save-key')?.addEventListener('click', ()=>{
-      const apiKey = $('#settings-api-key').value.trim();
-      saveSettings({apiKey});
-      alert('APIキーを保存しました。');
-    });
-    $('#btn-wipe-local')?.addEventListener('click', async ()=>{
-      if (!confirm('ローカル保存データ（一覧）をすべて削除します。よろしいですか？')) return;
-      await clearAll();
-      alert('削除しました。');
-    });
-  }
-}
-
-document.addEventListener('DOMContentLoaded', init);
-
-// ---------- PWA ----------
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
+const apiKeyEl = document.getElementById('apiKey');
+const saveKeyBtn = document.getElementById('saveKey');
+const keySaved = document.getElementById('keySaved');
+if(apiKeyEl){
+  apiKeyEl.value = localStorage.getItem('gc_api_key')||'';
+  saveKeyBtn.addEventListener('click', ()=>{
+    localStorage.setItem('gc_api_key', apiKeyEl.value.trim());
+    keySaved.textContent = '保存しました'; setTimeout(()=> keySaved.textContent='', 2000);
   });
 }
+
+openDB().then(()=>console.log('DB ready'));
