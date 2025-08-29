@@ -2,15 +2,142 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>現地フィールド相棒 v3</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>現地フィールド相棒 v3（フル）</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0f766e">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js'));
+    }
+  </script>
 </head>
 <body>
-<h1>現地フィールド相棒 v3</h1>
-<p>PWAアプリ本体です（省略版）。</p>
+<header>
+  <h1>現地フィールド相棒 v3</h1>
+  <nav>
+    <button id="tab-capture" class="active">記録する</button>
+    <button id="tab-list">一覧</button>
+    <button id="tab-settings">設定</button>
+  </nav>
+</header>
+
+<main>
+  <section id="screen-capture" class="screen active">
+    <div class="card">
+      <h2>新規記録</h2>
+      <div class="field">
+        <label>現地写真（最大5枚・自動圧縮）</label>
+        <input id="photoInput" type="file" accept="image/*" capture="environment" multiple>
+        <small class="muted">※ 大きな画像は長辺1600pxに自動縮小します。</small>
+        <div id="photoPreview" class="preview"></div>
+      </div>
+      <div class="field split">
+        <div>
+          <label>メモ</label>
+          <textarea id="memo" rows="3" placeholder="気になったポイント、地番、外観、道路幅員など"></textarea>
+        </div>
+        <div>
+          <label>タグ（任意）</label>
+          <input id="tags" type="text" placeholder="例：角地, 古家, 南面道路">
+          <label class="check"><input id="visited" type="checkbox"> 訪問済みにする</label>
+        </div>
+      </div>
+      <div class="field geo">
+        <div class="geo-row">
+          <button id="getLocation">位置情報を取得</button>
+          <button id="reverseGeocode" class="ghost">住所に変換</button>
+        </div>
+        <div id="geoStatus" class="muted">未取得</div>
+        <div id="addrStatus" class="muted"></div>
+        <div class="links-row" id="landLinks" style="display:none">
+          <button id="openNTA" class="ghost">路線価図を開く</button>
+          <button id="openZoning" class="ghost">用途地域マップ</button>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="saveEntry" class="primary">保存する</button>
+        <button id="resetForm" class="ghost">リセット</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="screen-list" class="screen">
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="メモ・タグ・住所で検索">
+      <select id="filterVisited">
+        <option value="">訪問フィルタなし</option>
+        <option value="visited">訪問済みのみ</option>
+        <option value="unvisited">未訪問のみ</option>
+      </select>
+      <button id="exportJSON">エクスポート</button>
+      <label class="import-label">
+        インポート
+        <input id="importJSON" type="file" accept="application/json">
+      </label>
+    </div>
+    <div id="list"></div>
+  </section>
+
+  <section id="screen-settings" class="screen">
+    <div class="card">
+      <h2>設定 / 使い方</h2>
+      <ol>
+        <li>Safariでこのページを開き → 共有 → <strong>ホーム画面に追加</strong>。</li>
+        <li>現地で「記録する」から写真→<strong>位置情報</strong>→<strong>住所に変換</strong>→メモ→保存。</li>
+      </ol>
+      <p class="muted">※ 位置情報は「App使用中に許可」を推奨。逆ジオコーディング（住所化）はGoogle APIキーが必要です。</p>
+      <div class="field">
+        <label>Google Maps Geocoding APIキー</label>
+        <input id="apiKey" type="text" placeholder="AIza..." autocomplete="off">
+        <button id="saveKey" class="primary">保存</button>
+        <span id="keySaved" class="muted"></span>
+      </div>
+      <div class="field">
+        <button id="clearAll" class="danger">データを全削除（ローカル）</button>
+      </div>
+      <div class="field">
+        <label>自動取得について</label>
+        <p class="muted">
+          路線価・用途地域の自動取得APIは公式に統一がなく、現状は座標から各公的マップへジャンプする運用です。<br>
+          将来的にサーバ連携で自動化へ拡張可能です。
+        </p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<template id="entryTemplate">
+  <article class="entry">
+    <img class="thumb" />
+    <div class="info">
+      <div class="row1">
+        <span class="date"></span>
+        <span class="tags"></span>
+        <span class="badge" data-badge="visited">訪問済</span>
+      </div>
+      <div class="memo"></div>
+      <div class="addr"></div>
+      <div class="coords"></div>
+      <div class="links"></div>
+      <div class="gallery"></div>
+    </div>
+    <div class="entry-actions">
+      <button class="openMap">地図</button>
+      <button class="openNTA">路線価図</button>
+      <button class="openZoning">用途地域</button>
+      <button class="copyAddr">座標コピー</button>
+      <button class="delete">削除</button>
+    </div>
+  </article>
+</template>
+
+<footer>
+  <small>© 現地フィールド相棒 PWA</small>
+</footer>
+
 <script src="app.js"></script>
 </body>
 </html>
