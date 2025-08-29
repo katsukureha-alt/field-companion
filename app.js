@@ -354,3 +354,12 @@ async function init(){
     });
   }
 }
+
+document.addEventListener('DOMContentLoaded', init);
+
+// ---------- PWA ----------
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
+  });
+}
