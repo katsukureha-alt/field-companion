@@ -1,0 +1,1 @@
+console.log('Field Companion v3 loaded');
